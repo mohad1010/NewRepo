@@ -114,41 +114,121 @@
             height: 100%;
         }
         
-        /* Stats Overlay */
+        /* Stats Overlay - Left Side */
         .stats-overlay {
             position: absolute;
             top: 15px;
             left: 15px;
-            right: 15px;
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            gap: 8px;
             z-index: 1000;
-            flex-wrap: wrap;
         }
         
         .stat-card {
             background: rgba(26, 26, 46, 0.95);
             backdrop-filter: blur(10px);
             border-radius: 12px;
-            padding: 10px 15px;
-            min-width: 100px;
+            padding: 8px 12px;
+            min-width: 90px;
             border: 1px solid var(--glass);
         }
         
         .stat-label {
-            font-size: 11px;
+            font-size: 10px;
             color: #888;
             margin-bottom: 2px;
         }
         
         .stat-value {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: 700;
         }
         
         .stat-value.distance { color: var(--success); }
         .stat-value.time { color: var(--warning); }
         .stat-value.speed { color: var(--secondary); }
+        
+        /* Compass */
+        .compass-container {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            z-index: 1000;
+        }
+        
+        .compass {
+            width: 60px;
+            height: 60px;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 50%;
+            border: 2px solid var(--glass);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .compass-arrow {
+            font-size: 28px;
+            transition: transform 0.3s ease;
+        }
+        
+        .compass-n {
+            position: absolute;
+            top: 5px;
+            font-size: 10px;
+            font-weight: bold;
+            color: var(--danger);
+        }
+        
+        /* Map Toggle Button */
+        .map-toggle {
+            position: absolute;
+            top: 85px;
+            right: 15px;
+            z-index: 1000;
+        }
+        
+        .map-toggle-btn {
+            width: 60px;
+            height: 40px;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border: 2px solid var(--glass);
+            border-radius: 10px;
+            color: var(--light);
+            font-size: 11px;
+            font-family: 'Cairo', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .map-toggle-btn:hover {
+            background: var(--primary);
+        }
+        
+        /* Direction Arrow Marker */
+        .direction-marker {
+            width: 40px !important;
+            height: 40px !important;
+            margin-left: -20px !important;
+            margin-top: -20px !important;
+        }
+        
+        .direction-arrow {
+            width: 40px;
+            height: 40px;
+            position: relative;
+        }
+        
+        .direction-arrow svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+            transition: transform 0.3s ease;
+        }
         
         /* Bottom Controls */
         .bottom-controls {
@@ -559,8 +639,12 @@
     <div class="map-container">
         <div id="map"></div>
         
-        <!-- Stats Overlay -->
+        <!-- Stats Overlay - Left Side -->
         <div class="stats-overlay">
+            <div class="stat-card">
+                <div class="stat-label">السرعة</div>
+                <div class="stat-value speed" id="speed">0 كم/س</div>
+            </div>
             <div class="stat-card">
                 <div class="stat-label">المسافة</div>
                 <div class="stat-value distance" id="distance">0.00 كم</div>
@@ -569,10 +653,21 @@
                 <div class="stat-label">الوقت</div>
                 <div class="stat-value time" id="duration">00:00</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">السرعة</div>
-                <div class="stat-value speed" id="speed">0 كم/س</div>
+        </div>
+        
+        <!-- Compass -->
+        <div class="compass-container">
+            <div class="compass">
+                <span class="compass-n">N</span>
+                <span class="compass-arrow" id="compassArrow">⬆️</span>
             </div>
+        </div>
+        
+        <!-- Map Toggle -->
+        <div class="map-toggle">
+            <button class="map-toggle-btn" id="mapToggleBtn" onclick="toggleMapType()">
+                🛰️<br>قمر
+            </button>
         </div>
         
         <!-- GPS Accuracy -->
@@ -683,12 +778,15 @@
             followMode: true,
             trackingInterval: 5000, // ms
             currentPosition: null,
+            currentHeading: 0,
+            compassHeading: 0,
             trackPoints: [],
             navigationPoints: [],
             startTime: null,
             totalDistance: 0,
             watchId: null,
-            intervalId: null
+            intervalId: null,
+            isSatellite: false
         };
         
         // ==================== Map Setup ====================
@@ -739,8 +837,13 @@
         }
         
         function onPositionUpdate(position) {
-            const { latitude, longitude, accuracy, speed } = position.coords;
+            const { latitude, longitude, accuracy, speed, heading } = position.coords;
             state.currentPosition = { lat: latitude, lng: longitude, accuracy, speed };
+            
+            // Update heading from GPS (when moving)
+            if (heading !== null && !isNaN(heading) && speed > 1) {
+                state.currentHeading = heading;
+            }
             
             // Update accuracy indicator
             updateAccuracyIndicator(accuracy);
@@ -790,12 +893,27 @@
         }
         
         function updateCurrentMarker(lat, lng) {
+            const arrowHtml = `
+                <div class="direction-arrow">
+                    <svg viewBox="0 0 24 24" style="transform: rotate(${state.currentHeading}deg)">
+                        <path fill="#4361ee" stroke="white" stroke-width="1" d="M12 2L4 20h16L12 2z"/>
+                    </svg>
+                </div>
+            `;
+            
             if (!currentMarker) {
                 currentMarker = L.marker([lat, lng], {
-                    icon: L.divIcon({ className: 'current-marker' })
+                    icon: L.divIcon({ 
+                        className: 'direction-marker',
+                        html: arrowHtml
+                    })
                 }).addTo(map);
             } else {
                 currentMarker.setLatLng([lat, lng]);
+                currentMarker.setIcon(L.divIcon({ 
+                    className: 'direction-marker',
+                    html: arrowHtml
+                }));
             }
         }
         
@@ -1183,8 +1301,63 @@
             setTimeout(() => toast.classList.remove('show'), 2500);
         }
         
+        // Toggle Map Type
+        function toggleMapType() {
+            state.isSatellite = !state.isSatellite;
+            const btn = document.getElementById('mapToggleBtn');
+            
+            if (state.isSatellite) {
+                map.removeLayer(mapLayers.street);
+                mapLayers.satellite.addTo(map);
+                btn.innerHTML = '🗺️<br>عادي';
+            } else {
+                map.removeLayer(mapLayers.satellite);
+                mapLayers.street.addTo(map);
+                btn.innerHTML = '🛰️<br>قمر';
+            }
+        }
+        
+        // Compass - Device Orientation
+        function initCompass() {
+            if (window.DeviceOrientationEvent) {
+                // iOS 13+ requires permission
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    // Will request on first user interaction
+                    document.body.addEventListener('click', requestCompassPermission, { once: true });
+                } else {
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+            }
+        }
+        
+        function requestCompassPermission() {
+            DeviceOrientationEvent.requestPermission()
+                .then(response => {
+                    if (response === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                    }
+                })
+                .catch(console.error);
+        }
+        
+        function handleOrientation(event) {
+            let heading = event.alpha; // 0-360
+            
+            // iOS uses webkitCompassHeading
+            if (event.webkitCompassHeading) {
+                heading = event.webkitCompassHeading;
+            }
+            
+            if (heading !== null) {
+                state.compassHeading = heading;
+                const arrow = document.getElementById('compassArrow');
+                arrow.style.transform = `rotate(${-heading}deg)`;
+            }
+        }
+        
         // ==================== Init ====================
         initGeolocation();
+        initCompass();
         
         // Update duration timer
         setInterval(() => {
